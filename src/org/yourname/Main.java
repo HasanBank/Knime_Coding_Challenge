@@ -6,12 +6,14 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
-
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -25,14 +27,16 @@ import org.apache.commons.cli.ParseException;
  * 
  * @author KNIME GmbH
  */
-public class Main {
+public class Main{
+	
+	public static List<String> inputTypeList;
 
 	public static void main(String[] args) throws IOException {
-		// add your code here
-		
-		List<String> inputTypeList;
+				
 		List<String> operationList;
-		List<String> resultText = new ArrayList<>();
+		int threadNumbers;
+		List<Method> operationCalls = new ArrayList<>();
+		String outputArg = null;
 		
 	    Options options = new Options();
 
@@ -60,7 +64,7 @@ public class Main {
 	    CommandLineParser parser = new DefaultParser();
 	    HelpFormatter formatter = new HelpFormatter();
 	    CommandLine cmd = null;
-
+	    
 	     try {
 	            cmd = parser.parse(options, args);
 	     } catch (ParseException e) {
@@ -73,14 +77,20 @@ public class Main {
 	     String inputFilePath = removePointyBrackets(cmd.getOptionValue("input"));
 	     inputTypeList = assignParametersToList(removePointyBrackets(cmd.getOptionValue("inputtype")));
 	     operationList = assignParametersToList(removePointyBrackets(cmd.getOptionValue("operations")));
-	     String threadNumbers = removePointyBrackets(cmd.getOptionValue("threads"));
-	     String outputArg = removePointyBrackets(cmd.getOptionValue("output"));
+	     threadNumbers = Integer.valueOf(removePointyBrackets(cmd.getOptionValue("threads")));
+	     if(cmd.getOptionValue("output") != null )
+	     {
+	    	 outputArg = removePointyBrackets(cmd.getOptionValue("output"));
+	     }
+	     
+	     System.out.println("### Welcome ###");
+	     System.out.println("Input File Name: " + inputFilePath);
+	     System.out.println("Input Type(s): " + inputTypeList.toString());
+	     System.out.println("Operation Type(s): " + operationList.toString());
+	     System.out.println("Number of Threads: " + threadNumbers);
+	     if(outputArg != null )
+	    	 System.out.println("Output File Name: " + outputArg);
 
-	     System.out.println(inputFilePath);
-	     System.out.println(inputTypeList.toString());
-	     System.out.println(operationList.toString());
-	     System.out.println(threadNumbers);
-	     System.out.println(outputArg);
 
 	     
 	     //Operations
@@ -89,6 +99,7 @@ public class Main {
 				System.err.print("capitalize operation works with string input type!");
 				return;	
 		 }	     
+	     
 	     
 	     if(operationList.contains("reverse") && !inputTypeList.contains("string") && !inputTypeList.contains("int") )
 	     {
@@ -102,103 +113,67 @@ public class Main {
 	    	 return;
 	     }
 	     
-	     resultText = readLineByLineText(inputFilePath,operationList);
-	     System.out.println(resultText);
-	     
-			
-		
-		
-		
-		
-		
-		
-		// DO NOT CHANGE THE FOLLOWING LINES OF CODE
-		System.out.println(String.format("Processed %d lines (%d of which were unique)", //
-				Statistics.getInstance().getNoOfLinesRead(), //
-				Statistics.getInstance().getNoOfUniqueLines()));
+		ExecutorService producerPool = Executors.newFixedThreadPool(1);
+		producerPool.submit(new Multithread(false,inputFilePath));
 				
-
-
-		
-	
-	
-	
-	
-	
-	}
-
-	
-	public static String removePointyBrackets(String arg)
-	{
-		return arg.substring(1, arg.length() - 1);
-	}
-	
-	public static List<String> readLineByLineText(String inputPath, List<String>operationList)
-	{
-		String outLine = null;
-		List<String> outText = new ArrayList<>();
-		List<Method> operationCalls = new ArrayList<>();
-		Operations operationsInstance = new Operations(); 
-		
-
-		
-			
 		for(int i=0; i< operationList.size() ; i++)
 		{
 			Method method;
 			try {
 				method = Operations.class.getDeclaredMethod(operationList.get(i), String.class);
 				operationCalls.add(method);
-			} catch (NoSuchMethodException | SecurityException e) {
-				
+			} catch (NoSuchMethodException | SecurityException e) {	
 				e.printStackTrace();
-			}
-			
+			}	
 		}
 		
-		
-		
-		try  
-		{  
-			File file=new File(inputPath);    //creates a new file instance  
-			FileReader fr=new FileReader(file);   //reads the file  
-			BufferedReader br=new BufferedReader(fr);  //creates a buffering character input stream    
-			String line;  
-			while((line=br.readLine())!=null)  
-			{  
-				Statistics.getInstance().updateStatisticsWithLine(line);
-				int i = 0;
-				outLine= line;
-				while (i < operationCalls.size() )
-				{
-					
-					try {
-						String lineFromOperation = (String) operationCalls.get(i).invoke(operationsInstance,outLine);
-						if(lineFromOperation != line )
-						{
-							outLine = lineFromOperation;
-						}
 						
-					} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
-						e.printStackTrace();
-					}
-					i++;
-				}
-				outText.add(outLine);
-
-			}  
-			fr.close();    //closes the stream and release the resources  
-			
-		}  
-		catch(IOException e)  
-		{  
-			e.printStackTrace();  
-		}  
+		ExecutorService consumerPool = Executors.newFixedThreadPool(threadNumbers);
+		for(int i =0; i < threadNumbers; i++ )
+		{				
+			consumerPool.submit(new Multithread(true,operationCalls));
+		}
 		
-		return outText;
+		producerPool.shutdown();
+		consumerPool.shutdown();
+		
+		while(!producerPool.isTerminated() && !consumerPool.isTerminated())
+		{}
+
+		// DO NOT CHANGE THE FOLLOWING LINES OF CODE
+		System.out.println(String.format("Processed %d lines (%d of which were unique)", //
+				Statistics.getInstance().getNoOfLinesRead(), //
+				Statistics.getInstance().getNoOfUniqueLines()));
+				
+
+		printResult(outputArg);
+
+	}
+
+	
+	/**
+	 * Removes the pointy brackets.
+	 * 
+	 * Pointy brackets are used in arguments so this function works to remove them to get data in arguments.
+	 *
+	 * @param String arg: the line of the file
+	 * @return string : line without pointy brackets
+	 */
+	public static String removePointyBrackets(String arg)
+	{
+		return arg.substring(1, arg.length() - 1);
 	}
 	
 	
+	
+	/**
+	 * Assign parameters to list.
+	 * 
+	 * To iterate or check some values into arguments, lists are created.
+	 *
+	 * @param String arg: the value in arguments
+	 * @return List<String> : argument values in list 
+	 */
 	public static List<String> assignParametersToList(String arg)
 	{
 		List<String> listArgs;
@@ -216,8 +191,33 @@ public class Main {
 		
 	}
 	
-	
-	
-	
+
+	/**
+	 * Prints the result.
+	 *
+	 * @param String outputArg: outputpath to write result
+	 */
+	public static void printResult(String outputArg)
+	{
+		
+		System.out.println("#Results#");
+		for( String line :Multithread.linesDone )
+		{
+				System.out.println(line);
+		}
+		
+		if(outputArg != null)
+		{
+			try {
+				Path fileOut = Paths.get(outputArg);
+	            Files.write(fileOut, Multithread.linesDone);
+	            System.out.println("Results also have been written to the " + outputArg);
+	        } catch (IOException e) {
+	            e.printStackTrace();
+	        }
+			
+		}
+	}
+		
 	
 }
